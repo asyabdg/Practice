@@ -1,0 +1,80 @@
+
+GRAPHQL_QUERY = """
+query EmfReportBpr($datereport: Date) {
+    EmfReportBpr(limit: 200, datereport: $datereport) {
+        id, grbId, grName, strId, strName,
+        katFgr, katFgrName, klsFpgr, klsFpgrName,
+        pklAbp, pklAbpName, spkPrg, spkPrgName,
+        pprg, pprgName, spk, spkName,
+        kato, katoName, budget, datereport, descr,
+        adtype, utv, utch, plg, plgp, plgo, sumrg, obz
+    }
+}
+"""
+
+
+def fetch_data(date_str):
+    try:
+        payload = {
+            "query": GRAPHQL_QUERY,
+            "variables": {"datereport": date_str}
+        }
+        response = requests.post(API_URL, json=payload, headers=HEADERS, verify=False, timeout=30)
+        response.raise_for_status()
+        return response.json().get("data", {}).get("EmfReportBpr", [])
+    except Exception as e:
+        logging.warning(f"Ошибка при загрузке за дату {date_str}: {e}")
+        return []
+
+
+def main():
+    conn = db_connect()
+    if not conn:
+        return
+    cur = conn.cursor()
+    cur.execute(CREATE_TABLE_QUERY)
+    conn.commit()
+
+    start_date = datetime.strptime("2024-01-01", "%Y-%m-%d")
+    end_date = datetime.strptime("2025-06-28", "%Y-%m-%d")  # или сегодняшняя дата
+    delta = timedelta(days=1)
+
+    total_loaded = 0
+
+    try:
+        with ThreadPoolExecutor(max_workers=THREADS) as executor:
+            current_date = start_date
+            while current_date <= end_date:
+                date_strs = [
+                    (current_date + i * delta).strftime("%Y-%m-%d")
+                    for i in range(THREADS)
+                    if (current_date + i * delta) <= end_date
+                ]
+                futures = [executor.submit(fetch_data, d) for d in date_strs]
+                all_rows = []
+
+                for future in as_completed(futures):
+                    rows = future.result()
+                    if rows:
+                        all_rows.append(process_rows(rows))
+
+                for batch in all_rows:
+                    if batch:
+                        execute_values(cur, INSERT_QUERY, batch)
+                        total_loaded += len(batch)
+                        logging.info(f"Загружено {total_loaded} записей")
+
+                current_date += THREADS * delta
+                conn.commit()
+
+    except KeyboardInterrupt:
+        logging.info("Прерывание пользователем.")
+
+    except Exception as e:
+        logging.error(f"Ошибка выполнения: {e}")
+
+    finally:
+        conn.commit()
+        cur.close()
+        conn.close()
+        logging.info(f"Завершено. Всего загружено: {total_loaded} записей.")
