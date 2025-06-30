@@ -1,0 +1,55 @@
+import fitz  
+import json
+import difflib
+
+def extract_text_from_pdf(pdf_path):
+    text = ""
+    with fitz.open(pdf_path) as doc:
+        for page in doc:
+            text += page.get_text()
+    return text
+
+def extract_text_from_json(json_path):
+    with open(json_path, 'r', encoding='utf-8') as f:
+        data = json.load(f)
+    # Извлекаем текстовые значения из всех строк JSON
+    values = []
+
+    def recursive_extract(obj):
+        if isinstance(obj, dict):
+            for value in obj.values():
+                recursive_extract(value)
+        elif isinstance(obj, list):
+            for item in obj:
+                recursive_extract(item)
+        elif isinstance(obj, str):
+            values.append(obj.strip())
+
+    recursive_extract(data)
+    return "\n".join(values)
+
+def compare_texts(text1, text2):
+    diff = difflib.unified_diff(
+        text1.splitlines(), text2.splitlines(),
+        lineterm='', fromfile='JSON', tofile='PDF'
+    )
+    return '\n'.join(diff)
+
+
+pdf_path = 'protocol_001.pdf'
+json_path = 'protocol_001.json'
+
+
+pdf_text = extract_text_from_pdf(pdf_path)
+json_text = extract_text_from_json(json_path)
+
+
+differences = compare_texts(json_text, pdf_text)
+
+
+if differences:
+    with open('diff_output.txt', 'w', encoding='utf-8') as f:
+        f.write(differences)
+    print("Различия найдены. См. файл diff_output.txt")
+else:
+    print("Различий не найдено. JSON и PDF содержат совпадающий текст.")
